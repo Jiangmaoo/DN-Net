@@ -1,0 +1,75 @@
+重建干净图像的 MSE 损失函数，我们可以使用 PyTorch 自带的均方误差损失函数 F.mse_loss 实现。在这个损失函数中，我们需要传入两个参数：
+
+clean_features：使用加雾图像的特征向量进行解码得到的重建干净图像；
+gt：原始的干净图像。
+这两个参数都是 PyTorch 的 Tensor 对象。具体实现如下
+import torch.nn.functional as F
+
+mse_loss = F.mse_loss(clean_features, gt)
+
+
+接下来是重建噪声图像的 BCE 损失函数。在这个损失函数中，我们需要传入两个参数：
+
+noise_recon：使用噪声图像的特征向量和加雾图像的特征向量进行解码得到的重建噪声图像；
+mask：一个二值掩码，用于指示哪些像素是噪声，哪些像素是信号。
+这两个参数都是 PyTorch 的 Tensor 对象。具体实现如下：
+# 对噪声重建进行阈值化，以分离噪声和信号
+threshold = 0.05
+noise_mask = (noise_recon > threshold).float()
+
+# 计算重建噪声图像与真实噪声图像之间的 BCE 损失
+bce_loss = F.binary_cross_entropy_with_logits(noise_recon, mask, reduction='none')
+noise_loss = (bce_loss * noise_mask).mean()
+
+在实现中，我们首先对重建噪声图像进行了阈值化操作，将所有大于阈值的像素都认为是噪声，其余像素都认为是信号。
+然后，我们使用 PyTorch 自带的二元交叉熵损失函数 F.binary_cross_entropy_with_logits 计算重建噪声图像与真实噪声图像之间的交叉熵损失。
+由于阈值化操作可能会将一些本来属于噪声的像素误判为信号，因此我们在计算损失时，只对阈值化之后的噪声像素进行损失计算，而对信号像素不计入损失。最后，我们将所有噪声像素的损失求平均值，作为重建噪声图像的损失。
+
+
+# 假设原始干净图像和加了雾的图像已经加载为名为 gt 和 noise_img 的 Tensor 对象
+# 在训练时，我们需要将 total_loss 作为损失函数反向传播，更新模型的参数。在测试时，我们只需要使用 clean_recon 作为重建的干净图像，而不需要使用 noise_recon。
+# 将 gt 和 noise_img 输入到模型中，得到解码出的特征向量
+clean_features, noise_features = model(gt, noise_img)
+
+# 使用 clean_features 进行重建干净图像的解码，并计算 MSE 损失
+clean_recon = model.decode_clean(clean_features)
+mse_loss = F.mse_loss(clean_recon, gt)
+
+# 使用 clean_features 和 noise_features 进行重建噪声图像的解码，并计算 BCE 损失
+noise_recon = model.decode_noise(clean_features, noise_features)
+bce_loss = model.calc_noise_loss(noise_recon, mask)
+
+# 计算总损失
+total_loss = mse_loss + bce_loss
+
+
+# 这个函数接受三个参数：
+#
+# model: 训练好的模型；
+# test_loader: 测试集的数据加载器；
+# device: 执行模型推断的设备（CPU 或 GPU）。
+# 函数首先将模型设置为评估模式（model.eval()），这会关闭模型中的 Dropout 和 BatchNorm 层，从而保证模型的输出具有确定性。然后，函数遍历测试集中的所有样本，并依次计算每个样本的损失。最后，函数输出测试集上的平均损失。
+def test(model, test_loader, device):
+    model.eval()
+    with torch.no_grad():
+        clean_loss_total = 0
+        noise_loss_total = 0
+        for i, data in enumerate(test_loader):
+            noise, haze, gt = data
+            noise, haze, gt = noise.to(device), haze.to(device), gt.to(device)
+            clean_loss, noise_loss = model(noise, haze, gt)
+            clean_loss_total += clean_loss.item()
+            noise_loss_total += noise_loss.item()
+
+        clean_loss_avg = clean_loss_total / len(test_loader)
+        noise_loss_avg = noise_loss_total / len(test_loader)
+
+        print('Test set: Clean loss: {:.4f}, Noise loss: {:.4f}'.format(
+            clean_loss_avg, noise_loss_avg))
+
+可以将一张图片裁剪成多个样本送入网络训练。这种方法通常被称为数据增强（data augmentation），
+通过对原始图像进行变换或处理，生成多个新的样本，从而扩大数据集并提高模型的泛化性能。
+将图像裁剪成多个样本可以增加数据集的大小，同时也可以让模型学习到不同位置的特征，提高模型的鲁棒性。
+
+在裁剪时，需要注意裁剪后的样本应该包含足够的信息以便于网络训练，例如不应该将人物的脑袋或者物体的重要部分裁剪掉。
+此外，应该确保裁剪后的样本与原始图像的宽高比例相同，以避免变形引起的误差。
