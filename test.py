@@ -128,18 +128,14 @@ def test_dataset_image(g1, test_dataset):
     PSNRs = []
     SSIMs = []
 
-    for n, (img, hazeImg,gt) in enumerate([test_dataset[i] for i in range(test_dataset.__len__())]):
+    for n, (img,gt) in enumerate([test_dataset[i] for i in range(test_dataset.__len__())]):
         print(test_dataset.img_list["path_A"][n])
 
         img = torch.unsqueeze(img, dim=0)
-        hazeImg = torch.unsqueeze(hazeImg, dim=0)
         gt = torch.unsqueeze(gt, dim=0)
-        # print(img.shape)
-        # print(hazeImg.shape)
-        # print(gt.shape)
 
         with torch.no_grad():   #上下文管理器，避免计算梯度，加快图像处理速度
-            reconstruct_tf = g1.test1(img.to(device),hazeImg.to(device))
+            reconstruct_tf = g1.test1(img.to(device),gt.to(device))
             reconstruct_tf = reconstruct_tf.to(torch.device("cpu")) #使用g1神经网络对图像进行阴影处理，并将结果转换为CPU张量
         # 计算并打印PSNR和SSIM指标
         psnr_val = psnr(gt, reconstruct_tf)

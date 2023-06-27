@@ -119,22 +119,15 @@ def test_dataset_image(g1, test_dataset):
     g1.to(device)   #把模型g1移动到选择的设备上
     g1.eval()   #将其设置为评估模式 （即不进行梯度更新）
 
-    #len=test_dataset.__len__()
-    PSNRs = []
-    SSIMs = []
-
-    for n, (img, hazeImg,gt) in enumerate([test_dataset[i] for i in range(test_dataset.__len__())]):
+    for n, (img,gt) in enumerate([test_dataset[i] for i in range(test_dataset.__len__())]):
         print(test_dataset.img_list["path_A"][n])
 
         img = torch.unsqueeze(img, dim=0)
-        hazeImg = torch.unsqueeze(hazeImg, dim=0)
         gt = torch.unsqueeze(gt, dim=0)
-        # print(img.shape)
-        # print(hazeImg.shape)
-        # print(gt.shape)
+
 
         with torch.no_grad():   #上下文管理器，避免计算梯度，加快图像处理速度
-            reconstruct_tf = g1.test1(img.to(device),hazeImg.to(device))
+            reconstruct_tf = g1.test1(img.to(device),gt.to(device))
             reconstruct_tf = reconstruct_tf.to(torch.device("cpu")) #使用g1神经网络对图像进行阴影处理，并将结果转换为CPU张量
 
 
@@ -142,9 +135,6 @@ def test_dataset_image(g1, test_dataset):
         noise_removal_image = transforms.ToPILImage(mode="RGB")(un_normalize(reconstruct_tf)[0, :, :, :])
         noise_removal_image.save("./test_result" + "/" + test_dataset.img_list["path_A"][n].split("/")[-1])
 
-        #将真实图像转换为PIL图像并保存到“./test_gt”文件夹中，其中文件名与输入图像文件名相同
-        #gt = transforms.ToPILImage(mode="RGB")(un_normalize(gt)[0, :, :, :])
-        #gt.save("./test_gt" + "/" + test_dataset.img_list["path_C"][n].split("/")[-1])
 
 def test(parser):
     # g1 = DN_Net(input_channels=3, output_channels=1)

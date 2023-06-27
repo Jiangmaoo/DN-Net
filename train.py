@@ -2,9 +2,6 @@ import argparse
 import os
 import time
 
-import cv2
-from keras.losses import MeanSquaredError
-from tensorflow import reduce_sum, square,reduce_mean
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,9 +15,11 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from models.DN_network import DN_Net, Discriminator
+from models.MeanFilter import MeanFilter
 from utils.data_loader import ImageDataset, ImageTransform,make_data_path_list
 
 torch.manual_seed(44)   #设置CPU生成随机数的种子
+operation_seed_counter = 0
 os.environ["CUDA_VISIBLE_DEVICES"]="0"  #设置GPU编号
 
 #打印网络参数,统计模型的参数量有多少
@@ -49,29 +48,95 @@ def get_parser():
 
     return parser
 
+#返回一个CUDA设备上的生成器
+def get_generator(dev):
+    global operation_seed_counter  #定义一个全局变量，用于生成操作的种子
+    operation_seed_counter += 1
+    g_cuda_generator = torch.Generator(device=dev)
+    g_cuda_generator.manual_seed(operation_seed_counter)
+    return g_cuda_generator
 
-def demo1(img):
+#用于将输入张量x进行空间到深度的转换，再一定程度上增加网络的非线性容量，处进行信息的流动和特征的重用
+def space_to_depth(x, block_size):
+    n, c, h, w = x.size()  #获取张量x的维度信息
+    unfolded_x = torch.nn.functional.unfold(x, block_size, stride=1,padding=1)  #使用unfold函数对输入张量进行展开操作，将图像歌城block*block的块
+    return unfolded_x.view(n, c * block_size**2, h, w)   #实现空间到深度的转换。3 1 1
 
-    # 设置雾的密度和透射率
-    fog_density = 0.8
-    transmission = 0.5
+#为给定图像生成一对掩码
+def generate_mask_pair(img,dev):
+    # prepare masks (N x C x H x W)
+    n, c, h, w = img.shape
+    #创建bool类型张量存储掩码
+    mask1 = torch.zeros(size=(n * h * w * 9, ),
+                        dtype=torch.bool,
+                        device=img.device)
+    mask2 = torch.zeros(size=(n * h * w * 9, ),
+                        dtype=torch.bool,
+                        device=img.device)
+    # prepare random mask pairs
+    idx_pair = torch.tensor(
+        [[0, 1], [0, 3], [1, 0], [1, 2], [1, 4], [2, 1], [2, 5], [3, 0], [3, 4], [3, 6], [4, 3], [4, 1],
+         [4, 5], [4, 7], [5, 2], [5, 4], [5, 8], [6, 3], [6, 7], [7, 6], [7, 4], [7, 8], [8, 7], [8, 5]],
+        dtype=torch.int64,
+        device=img.device)
+    #创建张量存储随机生成的索引
+    rd_idx = torch.zeros(size=(n * h * w, ),
+                         dtype=torch.int64,
+                         device=img.device)
+    torch.randint(low=0,
+                  high=8,
+                  size=(n * h * w ,),
+                  generator=get_generator(dev),
+                  out=rd_idx)
+    rd_pair_idx = idx_pair[rd_idx]
+    #索引加上一定的偏移量
+    rd_pair_idx += torch.arange(start=0,
+                                end=n * h * w * 9,
+                                step=9,
+                                dtype=torch.int64,
+                                device=img.device).reshape(-1, 1)
+    # get masks
+    mask1[rd_pair_idx[:, 0]] = 1
+    mask2[rd_pair_idx[:, 1]] = 1
+    return mask1, mask2
 
-    # 计算雾的值
-    height, width, _ = img.shape
-    fog = np.zeros((height, width), dtype=np.float32)
-    fog[:, :] = fog_density
+#生成图像的子图像。根据给定的图像和掩码，生成图像的子图像。
+# 其中子图像是将原图像按照2*2的块进行划分，并再每个块内选择掩模为 True的像素，生成对应的子图像，
+# 这样可以将图像分解成多个更小的图像块。
+def generate_subimages(img, mask):
+    n, c, h, w = img.shape
+    #创建一个与原图像相同大小的零张量，作为子图像的容器
+    subimage = torch.zeros(n,c, h, w,dtype=img.dtype,layout=img.layout,device=img.device)
+    # per channel，针对每个通道进行操作
+    for i in range(c):
+        #将当前通道的图像通过该函数进行空间到深度的转换，得到h/2×w/2的张量
+        img_per_channel = space_to_depth(img[:, i:i + 1, :, :], block_size=3)
+        #对张量进行维度变换，将通道维度移动到最后，并展平为一维
+        img_per_channel = img_per_channel.permute(0, 2, 3, 1).reshape(-1)
+        #根据掩模mask从img_中选择相应像素，并将调整维度顺序。
+        subimage[:, i:i + 1, :, :] = img_per_channel[mask].reshape(
+            n, h, w, 1).permute(0, 3, 1, 2)
+    return subimage
 
-    # 计算透射率
-    trans_map = np.exp(-transmission * fog)
+def calNoise(images,dev):
+    mask1, mask2 = generate_mask_pair(images,dev) #mask1.shape:torch.Size([65536]) 65536=256*256
+    noisy_sub1 = generate_subimages(images, mask1)  #noisy_sub1.shape:torch.Size([1, 3, 128, 128])
+    noisy_sub2 = generate_subimages(images, mask2)
 
-    # 添加雾
-    fog_img = np.zeros_like(img, dtype=np.float32)
-    for i in range(3):
-        fog_img[:, :, i] = img[:, :, i] * trans_map + fog * (1 - trans_map)
+    mean_filter = MeanFilter(kernel_size=5)
+    denoise1 = mean_filter(noisy_sub1) #torch.Size([1, 3, 128, 128])
+    denoise2 = mean_filter(noisy_sub2)
 
-    # 将图像转换回uint8格式
-    fog_img = np.uint8(fog_img)
-    return fog_img
+    # 计算噪声图像和干净图像的差异
+    diff1 = torch.abs(images - denoise1)
+    # 根据差异计算掩码
+    threshold = 0.05  # 可以根据具体情况调整阈值
+    noise1 = (diff1 > threshold).float()  # 大于阈值的位置被置为 1，否则为 0
+    diff2 = torch.abs(images - denoise2)
+    noise2 = (diff2 > threshold).float()  # 大于阈值的位置被置为 1，否则为 0
+
+    return noise1,noise2
+
 
 def fix_model_state_dict(state_dict):
     #初始化有序字典
@@ -118,7 +183,6 @@ def un_normalize(x):
     x=x.transpose(1,3)  #归一化转化
     return x
 
-
 # 需要显示解码器出来的噪声特征，本体特征，gt，加雾的图像
 def evaluate(g1,dataset,device,filename):
     img,gt=zip(*[dataset[i] for i in range(9)])
@@ -127,22 +191,25 @@ def evaluate(g1,dataset,device,filename):
     gt=torch.stack(gt)
     print(gt.shape)
     print(img.shape)
+    # print(img.device)  #cpu
 
+    noise1, noise2 = calNoise(img,"cpu")
     with torch.no_grad():
-        reconstruct_c,reconstruct_n,reconstruct_gt=g1.test(img.to(device),gt.to(device))
-        grid_rec=make_grid(un_normalize(reconstruct_c.to(torch.device("cpu"))),nrow=3)
+
+        noise1,noise2,reconstruct_gt=g1.test(img.to(device),noise1.to(device),noise2.to(device))
+        grid_rec=make_grid(un_normalize(reconstruct_gt.to(torch.device("cpu"))),nrow=3)
         print(grid_rec.shape)
-        reconstruct_n=reconstruct_n.to(torch.device("cpu"))
+        noise1=noise1.to(torch.device("cpu"))
         reconstruct_gt = reconstruct_gt.to(torch.device("cpu"))
-        reconstruct_c=reconstruct_c.to(torch.device("cpu"))
+        noise2=noise2.to(torch.device("cpu"))
 
     grid_removal=make_grid(
         torch.cat(
             (
                 un_normalize(img),
                 un_normalize(gt),
-                un_normalize(reconstruct_n),
-                un_normalize(reconstruct_c),
+                un_normalize(noise1),
+                un_normalize(noise2),
                 un_normalize(reconstruct_gt)
             ),
             dim = 0,
@@ -151,29 +218,6 @@ def evaluate(g1,dataset,device,filename):
     )
     save_image(grid_rec,filename+"noise_removal_img.jpg")
     save_image(grid_removal,filename+"noise_removal_separation.jpg")
-
-def compute_loss(denoised_image, gt_image):
-    # 将图像转换为Lab颜色空间
-    #denoised_lab = cv2.cvtColor(denoised_image, cv2.COLOR_BGR2Lab)
-    #gt_lab = cv2.cvtColor(gt_image, cv2.COLOR_BGR2Lab)
-
-    # 提取亮度（L）通道
-    # denoised_l = denoised_image[:, :, 0]
-    # gt_l = gt_image[:, :, 0]
-
-    # 计算亮度损失（均方误差）
-    # l_loss = np.mean((denoised_l - gt_l) ** 2)
-    l_loss=MeanSquaredError()(denoised_image[:, :, :, 0], gt_image[:, :, :, 0])
-
-    # 提取对比度（ab）通道
-    denoised_ab = denoised_image[:, :, 1:]
-    gt_ab = gt_image[:, :, 1:]
-
-    # 计算对比度损失（均方误差）
-    # ab_loss = np.mean((denoised_ab - gt_ab) ** 2)
-    ab_loss = MeanSquaredError()(denoised_image[:, :, :, 1:], gt_image[:, :, :, 1:])
-    # 返回亮度损失和对比度损失
-    return l_loss, ab_loss
 
 
 def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="model"):
@@ -205,7 +249,7 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
                                                          threshold=0.00001,min_lr=0.000000000001,patience=50)
 
     #鉴别器
-    optimizer_d=torch.optim.Adam([{"params":d1.parameters()}],lr=lr,betas=(beta1,beta2))
+    optimizer_d1=torch.optim.Adam([{"params":d1.parameters()}],lr=lr,betas=(beta1,beta2))
 
     #损失
     criterion_gan=nn.BCEWithLogitsLoss().to(device)   #sigmoid+BCE
@@ -256,19 +300,35 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
 
             mini_batch_size=images.size()[0]
 
+            # noise1,noise2=calNoise(images)
+            mask1, mask2 = generate_mask_pair(images,device)  # mask1.shape:torch.Size([65536]) 65536=256*256
+            noisy_sub1 = generate_subimages(images, mask1)  # noisy_sub1.shape:torch.Size([1, 3, 128, 128])
+            noisy_sub2 = generate_subimages(images, mask2)
+
+            mean_filter = MeanFilter(kernel_size=5)
+            denoise1 = mean_filter(noisy_sub1)  # torch.Size([1, 3, 128, 128])
+            denoise2 = mean_filter(noisy_sub2)
+
+            # 计算噪声图像和干净图像的差异
+            diff1 = torch.abs(images - denoise1)
+            # 根据差异计算掩码
+            threshold = 0.05  # 可以根据具体情况调整阈值
+            noise1 = (diff1 > threshold).float()  # 大于阈值的位置被置为 1，否则为 0
+            diff2 = torch.abs(images - denoise2)
+            noise2 = (diff2 > threshold).float()  # 大于阈值的位置被置为 1，否则为 0
+
             #====训练鉴别器=====
 
             #允许反向传播
             set_requires_grad([d1],True)
             #将模型参数梯度设置为0
-            optimizer_d.zero_grad()
+            optimizer_d1.zero_grad()
             #获取生成器生成的图片
-            reconstruct_clean,reconstruct_no,reconstruct_gt=g1(images,gt)
-            #计算亮度损失l_loss,和对比度损失ab_loss
-            l_loss=criterion_mse(reconstruct_gt[:, :, :, 0],gt[:, :, :, 0])
-            ab_loss=criterion_mse(reconstruct_gt[:, :, :, 1:],gt[:, :, :, 1:])
+            recon_noise1, recon_noise2,reconstruct_gt=g1(images,noise1,noise2)
 
-            fake1=torch.cat([images,reconstruct_clean],dim=1)#输入图片和生成噪声图片cat连接
+
+            #重建干净图像鉴别器
+            fake1=torch.cat([images,reconstruct_gt],dim=1)#输入图片和生成噪声图片cat连接
             real1=torch.cat([images,gt],dim=1)#将输入图片和gt做cat连接
 
             out_d1_fake=d1(fake1.detach())  #detach()截断反向传播流
@@ -285,7 +345,7 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
             # 判别器使用真实图像和生成器生成的图像进行训练，以便学习区分真实图像和生成图像的能力
             d_loss=lambda_dict["lambda2"]*loss_d1_fake+lambda_dict["lambda2"]*loss_d1_real
             d_loss.backward()
-            optimizer_d.step()  #对所有参数进行更新
+            optimizer_d1.step()  #对所有参数进行更新
             epoch_d_loss+=d_loss.item()
 
             #=====训练生成器======
@@ -295,7 +355,7 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
             optimizer_g.zero_grad()
 
             #使用鉴别器帮助生成器训练
-            fake1=torch.cat([images,reconstruct_clean],dim=1) #输入图片和生成无阴影图片cat连接
+            fake1=torch.cat([images,reconstruct_gt],dim=1) #输入图片和生成无阴影图片cat连接
             out_d1_fake=d1(fake1.detach())
             g_l_c_gan1=criterion_gan(out_d1_fake,label_d1_real)
 
@@ -305,22 +365,26 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
             threshold = 0.05  # 可以根据具体情况调整阈值
             mask = (diff > threshold).float()  # 大于阈值的位置被置为 1，否则为 0
 
-            #分别计算  输入重构损失  无噪声重构损失  gt重构损失
-            g_l_data1=criterion_bce(reconstruct_no,mask)  #噪声特征图像损失
-            g_l_data2=criterion_mse(reconstruct_clean,gt) #无噪声重构损失
-            g_l_data3=criterion_mse(reconstruct_gt,gt)  #gt重构损失
+            #分别计算
+            g_l_data1=criterion_mse(reconstruct_gt,gt)  #gt重构损失
+            g_l_data2_1 = criterion_bce(noise1, mask)  # 噪声分布1图像损失
+            g_l_data2_2 = criterion_bce(noise2, mask)  # 噪声分布2图像损失
+            g_l_data2=criterion_bce(noise1,noise2)     #噪声特征相似损失
 
             #生成器总损失
-            g_loss=lambda_dict["lambda1"]*g_l_data1+g_l_data2+\
-                lambda_dict["lambda1"]*g_l_data3+lambda_dict["lambda2"]*g_l_c_gan1+lambda_dict["lambda2"]*(l_loss+ab_loss)
+            # g_loss=lambda_dict["lambda1"]*g_l_data1+g_l_data2+\
+            #     lambda_dict["lambda1"]*g_l_data3+lambda_dict["lambda2"]*g_l_c_gan1+lambda_dict["lambda2"]*(l_loss+ab_loss)
 
+            # 生成器总损失10,0.1,0.2
+            g_loss=lambda_dict["lambda1"]*g_l_data1+lambda_dict["lambda2"]*g_l_c_gan1+\
+                lambda_dict["lambda1"]+g_l_data2_1+lambda_dict["lambda1"]*g_l_data2_2+lambda_dict["lambda1"]*g_l_data2
             g_loss.backward()
             optimizer_g.step()
             # print(g_l_data4)
 
             epoch_g_loss+=g_loss.item()    #生成器总损失
             epoch_single_g_loss+=g_l_c_gan1.item()  #gan损失
-            epoch_tf_loss+=g_l_data2.item() #无噪声重构损失
+            epoch_tf_loss+=g_l_data2.item() #噪声分布损失
 
         t_epoch_finish=time.time()
         Epoch_D_Loss=epoch_d_loss/(lambda_dict["lambda2"]*2*data_len)
