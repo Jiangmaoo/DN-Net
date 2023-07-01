@@ -30,7 +30,21 @@ class DN_Net(nn.Module):
         #对噪声分布解码
         noise1=self.noise1_decoder(noise1_features)
         noise2 = self.noise1_decoder(noise2_features)
-        gt_recon=self.clean_decoder(noise_features, noise1_features)
+        x1=(noise2_features["x1"]+noise1_features["x1"])/2.0
+        x2 = (noise2_features["x2"] + noise1_features["x2"]) / 2.0
+        x3 = (noise2_features["x3"] + noise1_features["x3"]) / 2.0
+        x4 = (noise2_features["x4"] + noise1_features["x4"]) / 2.0
+
+        avegNoise = {
+            "x1": x1,
+            "x2": x2,
+            "x3": x3,
+            "x4": x4,
+
+        }
+
+
+        gt_recon=self.clean_decoder(noise_features, avegNoise)
 
         return noise1, noise2, gt_recon
 
@@ -42,17 +56,47 @@ class DN_Net(nn.Module):
         # 对噪声分布解码
         noise1 = self.noise1_decoder(noise1_features)
         noise2 = self.noise1_decoder(noise2_features)
-        gt_recon = self.clean_decoder(noise_features, noise1_features)
+        x1 = (noise2_features["x1"] + noise1_features["x1"]) / 2.0
+        x2 = (noise2_features["x2"] + noise1_features["x2"]) / 2.0
+        x3 = (noise2_features["x3"] + noise1_features["x3"]) / 2.0
+        x4 = (noise2_features["x4"] + noise1_features["x4"]) / 2.0
+
+        avegNoise = {
+            "x1": x1,
+            "x2": x2,
+            "x3": x3,
+            "x4": x4,
+
+        }
+
+        gt_recon = self.clean_decoder(noise_features, avegNoise)
 
         return noise1, noise2, gt_recon
 
-    def test1(self,noise_img, gt_img):
+    def test1(self,noise_img,noise1,noise2):
+        # 分别使用噪声图像编码器，和有雾图像编码器进行编码
         noise_features = self.noise_encoder(noise_img)
-        gt_features = self.gt_encoder(gt_img)
-        reconstruct_gt=self.noise_move_decoder(noise_features, gt_features)   #阴影移除联合解码器Js2sf
+        noise1_features = self.noiseone_encoder(noise1)
+        noise2_features = self.noisetwo_encoder(noise2)
+        # 对噪声分布解码
+        noise1 = self.noise1_decoder(noise1_features)
+        noise2 = self.noise1_decoder(noise2_features)
+        x1 = (noise2_features["x1"] + noise1_features["x1"]) / 2.0
+        x2 = (noise2_features["x2"] + noise1_features["x2"]) / 2.0
+        x3 = (noise2_features["x3"] + noise1_features["x3"]) / 2.0
+        x4 = (noise2_features["x4"] + noise1_features["x4"]) / 2.0
 
+        avegNoise = {
+            "x1": x1,
+            "x2": x2,
+            "x3": x3,
+            "x4": x4,
 
-        return reconstruct_gt
+        }
+
+        gt_recon = self.clean_decoder(noise_features, avegNoise)
+
+        return gt_recon
 
     def test_pair(self,noise_img,gt_img):
         noise_features = self.noise_encoder(noise_img)

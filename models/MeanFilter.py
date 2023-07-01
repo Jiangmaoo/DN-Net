@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
+#均值滤波
 class MeanFilter(nn.Module):
     def __init__(self, kernel_size):
         super(MeanFilter, self).__init__()

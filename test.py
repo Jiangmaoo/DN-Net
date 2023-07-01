@@ -14,6 +14,7 @@ from torchvision import transforms
 from torchvision.utils import make_grid, save_image
 
 from models.DN_network import DN_Net
+from train import calNoise
 from utils.data_loader import ImageDataset, ImageTransform, ImageTransformOwn, make_data_path_list
 from PIL import Image
 
@@ -30,7 +31,7 @@ def get_parser():
         add_help=True
     )
 
-    parser.add_argument('-l', '--load', type=str, default="D-N-Net_G1_600", help='the number of checkpoints')
+    parser.add_argument('-l', '--load', type=str, default="D-N-Net_G1_240", help='the number of checkpoints')
     parser.add_argument('-i', '--image_path', type=str, default=None, help='file path of image you want to test')
     parser.add_argument('-o', '--out_path', type=str, default='./test_result', help='saving path')
     parser.add_argument('-s', '--image_size', type=int, default=286)
@@ -54,8 +55,8 @@ def fix_model_state_dict(state_dict):
 def check_dir():
     if not os.path.exists('./test_result'):
         os.mkdir('./test_result')
-    if not os.path.exists('./test_result/NOISE_removal_image'):
-        os.mkdir('./test_result/NOISE_removal_image')
+    # if not os.path.exists('./test_result/NOISE_removal_image'):
+    #     os.mkdir('./test_result/NOISE_removal_image')
     # if not os.path.exists('./test_result/grid'):
     #     os.mkdir('./test_result/shadow_removal_grid_images')
 
@@ -132,10 +133,11 @@ def test_dataset_image(g1, test_dataset):
         print(test_dataset.img_list["path_A"][n])
 
         img = torch.unsqueeze(img, dim=0)
+        noise1, noise2 = calNoise(img, "cpu")
         gt = torch.unsqueeze(gt, dim=0)
 
         with torch.no_grad():   #上下文管理器，避免计算梯度，加快图像处理速度
-            reconstruct_tf = g1.test1(img.to(device),gt.to(device))
+            reconstruct_tf = g1.test1(img.to(device),noise1.to(device),noise2.to(device))
             reconstruct_tf = reconstruct_tf.to(torch.device("cpu")) #使用g1神经网络对图像进行阴影处理，并将结果转换为CPU张量
         # 计算并打印PSNR和SSIM指标
         psnr_val = psnr(gt, reconstruct_tf)

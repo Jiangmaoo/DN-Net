@@ -198,7 +198,7 @@ def evaluate(g1,dataset,device,filename):
 
         noise1,noise2,reconstruct_gt=g1.test(img.to(device),noise1.to(device),noise2.to(device))
         grid_rec=make_grid(un_normalize(reconstruct_gt.to(torch.device("cpu"))),nrow=3)
-        print(grid_rec.shape)
+        # print(grid_rec.shape)
         noise1=noise1.to(torch.device("cpu"))
         reconstruct_gt = reconstruct_gt.to(torch.device("cpu"))
         noise2=noise2.to(torch.device("cpu"))
@@ -262,7 +262,7 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
     num_train_img=len(dataloader.dataset)
     batch_size=dataloader.batch_size
 
-    lambda_dict={"lambda1":10,"lambda2":0.1,"lambda3":0.2}
+    lambda_dict={"lambda1":10,"lambda2":0.1,"lambda3":0.2,"lambda4":2}
 
     iteration=1
     g_losses=[]
@@ -282,6 +282,7 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
         epoch_g_loss=0.0
         epoch_d_loss=0.0
         epoch_single_g_loss=0.0
+        epoch_nd_loss = 0.0
         epoch_tf_loss=0.0
 
         print('--------------')
@@ -367,29 +368,31 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
 
             #分别计算
             g_l_data1=criterion_mse(reconstruct_gt,gt)  #gt重构损失
-            g_l_data2_1 = criterion_bce(noise1, mask)  # 噪声分布1图像损失
-            g_l_data2_2 = criterion_bce(noise2, mask)  # 噪声分布2图像损失
-            g_l_data2=criterion_bce(noise1,noise2)     #噪声特征相似损失
+            g_l_data2_1 = criterion_mse(noise1, mask)  # 噪声分布1图像损失
+            g_l_data2_2 = criterion_mse(noise2, mask)  # 噪声分布2图像损失
+            # g_l_data2=criterion_bce(noise1,noise2)     #噪声特征相似损失
 
             #生成器总损失
             # g_loss=lambda_dict["lambda1"]*g_l_data1+g_l_data2+\
             #     lambda_dict["lambda1"]*g_l_data3+lambda_dict["lambda2"]*g_l_c_gan1+lambda_dict["lambda2"]*(l_loss+ab_loss)
 
-            # 生成器总损失10,0.1,0.2
+            # 生成器总损失10,0.1,0.2,2
             g_loss=lambda_dict["lambda1"]*g_l_data1+lambda_dict["lambda2"]*g_l_c_gan1+\
-                lambda_dict["lambda1"]+g_l_data2_1+lambda_dict["lambda1"]*g_l_data2_2+lambda_dict["lambda1"]*g_l_data2
+                lambda_dict["lambda1"]*g_l_data2_1+lambda_dict["lambda1"]*g_l_data2_2
             g_loss.backward()
             optimizer_g.step()
-            # print(g_l_data4)
+            # print(g_loss)
 
             epoch_g_loss+=g_loss.item()    #生成器总损失
             epoch_single_g_loss+=g_l_c_gan1.item()  #gan损失
-            epoch_tf_loss+=g_l_data2.item() #噪声分布损失
+            epoch_tf_loss += g_l_data1.item()  # 噪声分布损失
+            # epoch_nd_loss+=g_l_data2.item() #噪声分布损失
 
         t_epoch_finish=time.time()
         Epoch_D_Loss=epoch_d_loss/(lambda_dict["lambda2"]*2*data_len)
         Epoch_G_Loss=epoch_g_loss/data_len
         Epoch_Single_G_Loss=epoch_single_g_loss/data_len
+        # Epoch_nd_Loss = epoch_nd_loss / data_len
         Epoch_tf_Loss=epoch_tf_loss/data_len
 
         print("------------")
@@ -398,7 +401,7 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
             epoch_d_loss/(lambda_dict["lambda2"]*2*data_len),
             epoch_g_loss/data_len,
             epoch_single_g_loss/data_len,
-            epoch_tf_loss/data_len,
+            epoch_tf_loss / data_len,
         ))
         print("timer:{:.4f} sec.".format(t_epoch_finish-t_epoch_start))
 
@@ -412,21 +415,22 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
         # d_losses=np.append(epoch_g_loss/data_len)
         # single_gan_losses=np.append(epoch_single_g_loss/data_len)
         # general_losses=np.append(epoch_tf_loss/data_len)
-        g_losses.append(Epoch_D_Loss)
+        # g_losses.append(Epoch_D_Loss)
+        g_losses.append(epoch_d_loss/(lambda_dict["lambda2"]*2*data_len))
         d_losses.append(Epoch_G_Loss)
         single_gan_losses.append(Epoch_Single_G_Loss)
         general_losses.append(Epoch_tf_Loss)
 
-        #输出损失日志
-        #plot_log(
-         #  {
-         #      "G":g_losses,
-          #     "D":d_losses,
-          #     "SG":single_gan_losses,
-         #      "GENERAL":general_losses
-        #   },
-        #   save_model_name+str(epoch)
-       # )
+        # 输出损失日志
+        plot_log(
+          {
+              "G":g_losses,
+              "D":d_losses,
+              "SG":single_gan_losses,
+              "GENERAL":general_losses
+          },
+          save_model_name+str(epoch)
+       )
 
         #采用间隔几个epoch保存模型
         if epoch%10==0:

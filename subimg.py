@@ -1,6 +1,13 @@
+import cv2
+
 import torch
+from PIL import Image
+from matplotlib import pyplot as plt
+from torchvision.transforms import transforms
 
 from models.MeanFilter import MeanFilter
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 operation_seed_counter=0
 device="cuda:0" if torch.cuda.is_available() else "cpu"
@@ -80,13 +87,15 @@ def calNoise(images):
     mask1, mask2 = generate_mask_pair(images) #mask1.shape:torch.Size([65536]) 65536=256*256
     noisy_sub1 = generate_subimages(images, mask1)  #noisy_sub1.shape:torch.Size([1, 3, 128, 128])
     noisy_sub2 = generate_subimages(images, mask2)
-    print("noisy_sub1.shape:{}".format(noisy_sub1.shape))
+
+    # print("noisy_sub1.shape:{}".format(noisy_sub1.shape))
 
     mean_filter = MeanFilter(kernel_size=5)
     denoise1 = mean_filter(noisy_sub1) #torch.Size([1, 3, 128, 128])
     denoise2 = mean_filter(noisy_sub2)
-    print(denoise1.shape)
-    print("image.shape:{}".format(images.shape))#image.shape:torch.Size([1, 3, 256, 256])
+
+    # print(denoise1.shape)
+    # print("image.shape:{}".format(images.shape))#image.shape:torch.Size([1, 3, 256, 256])
 
     # 计算噪声图像和干净图像的差异
     diff1 = torch.abs(images - denoise1)
@@ -96,10 +105,56 @@ def calNoise(images):
     diff2 = torch.abs(images - denoise2)
     noise2 = (diff2 > threshold).float()  # 大于阈值的位置被置为 1，否则为 0
 
+    fig = plt.figure(figsize=(6, 9))
+    axes = fig.subplots(3, 2)
+
+    axes[0, 0].imshow(noisy_sub1.squeeze().permute(1, 2, 0))
+    axes[0, 1].imshow(noisy_sub2.squeeze().permute(1, 2, 0))
+
+    axes[1, 0].imshow(denoise1.squeeze().permute(1, 2, 0))
+    axes[1, 1].imshow(denoise2.squeeze().permute(1, 2, 0))
+
+    axes[2, 0].imshow(noise1.squeeze().permute(1, 2, 0))
+    axes[2, 1].imshow(noise2.squeeze().permute(1, 2, 0))
+
+    # 关闭坐标轴
+    for ax in axes.flatten():
+        ax.axis('off')
+
+    # 调整子图间距
+    plt.subplots_adjust(wspace=0.01, hspace=0.01)
+
+    # 显示图像
+    plt.show()
+
     return noise1,noise2
 
 if __name__=="__main__":
-    input_data = torch.randn(1, 3, 256, 256)  # Random input tensor with shape (batch_size, channels, height, width)
-    noise1, noise2 = calNoise(input_data)
+    # input_data = torch.randn(1, 3, 256, 256)  # Random input tensor with shape (batch_size, channels, height, width)
+    # noise1, noise2 = calNoise(input_data)
+    # print(noise1.shape)
+    # print(noise2.shape)
+    # img = Image.open('dataset/0004.png').convert('RGB')
+
+    #读取图像
+    # img=cv2.imread('dataset/0036.png')
+    # 图像预处理和转换
+    transform = transforms.Compose([
+        transforms.Resize((383, 383)),  # 调整图像尺寸
+        transforms.ToTensor()  # 转换为张量
+    ])
+
+    # 读取图像
+    image_path = 'dataset/0312.png'
+    image = Image.open(image_path)
+
+    # 进行预处理和转换，并添加批次维度
+    tensor_image = transform(image)
+    tensor_image = tensor_image.unsqueeze(0)  # 在第0维度添加批次大小
+
+    # 显示张量的形状
+    print(tensor_image.shape)
+
+
+    noise1, noise2 = calNoise(tensor_image)
     print(noise1.shape)
-    print(noise2.shape)
