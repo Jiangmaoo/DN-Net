@@ -8,13 +8,13 @@ class DN_Net(nn.Module):
     def __init__(self, input_channels=3,output_channels=3):
         super(DN_Net, self).__init__()
         #对噪声图像编码
-        self.noise_encoder = NoiseOneEncoder(input_channels)
+        self.noise_encoder = NoiseEncoder(input_channels)
         #对平滑过后的噪声分布1进行编码
-        self.noiseone_encoder = NoiseOneEncoder(input_channels)
+        self.noiseone_encoder = NoiseEncoder(input_channels)
         #对平滑过后的噪声分布2进行编码
-        self.noisetwo_encoder = NoiseOneEncoder(input_channels)
+        self.noisetwo_encoder = NoiseEncoder(input_channels)
 
-        self.clean_decoder = NoiseTwoDecoder(input_channels)
+        self.clean_decoder = CleanDecoder(input_channels)
         self.noise1_decoder = NoiseTwoDecoder(input_channels)
         #噪声移除解码器
         self.noise2_decoder=NoiseTwoDecoder(input_channels)
@@ -24,62 +24,95 @@ class DN_Net(nn.Module):
 
     def forward(self, noise_img,noise1,noise2):
         #分别使用噪声图像编码器，和有雾图像编码器进行编码
-
+        noise_features = self.noise_encoder(noise_img)
         noise1_features = self.noiseone_encoder(noise1)
         noise2_features = self.noisetwo_encoder(noise2)
         #对噪声分布解码
         noise1=self.noise1_decoder(noise1_features)
         noise2 = self.noise1_decoder(noise2_features)
 
-        noise_ave=torch.abs((noise1+noise2)/2.0)
-        diff1 = torch.abs(noise_img - noise_ave)
+        x1 = (noise2_features["x1"] + noise1_features["x1"]) / 2.0
+        x2 = (noise2_features["x2"] + noise1_features["x2"]) / 2.0
+        x3 = (noise2_features["x3"] + noise1_features["x3"]) / 2.0
+        x4 = (noise2_features["x4"] + noise1_features["x4"]) / 2.0
 
-        noise_features = self.noise_encoder(diff1)
-        gt_recon=self.clean_decoder(noise_features)
+        avegNoise = {
+            "x1": x1,
+            "x2": x2,
+            "x3": x3,
+            "x4": x4,
 
-        return noise_ave, diff1, gt_recon
+        }
+
+
+        gt_recon=self.clean_decoder(noise_features, avegNoise)
+
+        return noise1, noise2, gt_recon
 
     def test(self,noise_img,noise1,noise2):
+        # 分别使用噪声图像编码器，和有雾图像编码器进行编码
+        noise_features = self.noise_encoder(noise_img)
         noise1_features = self.noiseone_encoder(noise1)
         noise2_features = self.noisetwo_encoder(noise2)
         # 对噪声分布解码
         noise1 = self.noise1_decoder(noise1_features)
         noise2 = self.noise1_decoder(noise2_features)
+        x1 = (noise2_features["x1"] + noise1_features["x1"]) / 2.0
+        x2 = (noise2_features["x2"] + noise1_features["x2"]) / 2.0
+        x3 = (noise2_features["x3"] + noise1_features["x3"]) / 2.0
+        x4 = (noise2_features["x4"] + noise1_features["x4"]) / 2.0
 
-        noise_ave = torch.abs((noise1 + noise2) / 2.0)
-        diff1 = torch.abs(noise_img - noise_ave)
+        avegNoise = {
+            "x1": x1,
+            "x2": x2,
+            "x3": x3,
+            "x4": x4,
 
-        noise_features = self.noise_encoder(diff1)
-        gt_recon = self.clean_decoder(noise_features)
+        }
 
-        return noise_ave, diff1, gt_recon
+
+        gt_recon = self.clean_decoder(noise_features, avegNoise)
+
+        return noise1, noise2, gt_recon
 
     def test1(self,noise_img,noise1,noise2):
         # 分别使用噪声图像编码器，和有雾图像编码器进行编码
         noise_features = self.noise_encoder(noise_img)
         noise1_features = self.noiseone_encoder(noise1)
         noise2_features = self.noisetwo_encoder(noise2)
-
-        x0 = (noise2_features["x0"] + noise1_features["x0"]) / 2.0
         x1 = (noise2_features["x1"] + noise1_features["x1"]) / 2.0
         x2 = (noise2_features["x2"] + noise1_features["x2"]) / 2.0
         x3 = (noise2_features["x3"] + noise1_features["x3"]) / 2.0
-        x4_1 = (noise2_features["x4_1"] + noise1_features["x4_1"]) / 2.0
-        x4_2 = (noise2_features["x4_2"] + noise1_features["x4_2"]) / 2.0
-        x4_3 = (noise2_features["x4_3"] + noise1_features["x4_3"]) / 2.0
-        x5 = (noise2_features["x5"] + noise1_features["x5"]) / 2.0
+        x4 = (noise2_features["x4"] + noise1_features["x4"]) / 2.0
 
         avegNoise = {
-            "x0": x0,
             "x1": x1,
             "x2": x2,
             "x3": x3,
-            "x4_1": x4_1,
-            "x4_2": x4_2,
-            "x4_3": x4_3,
-            "x5": x5,
+            "x4": x4,
 
         }
+
+        # x0 = (noise2_features["x0"] + noise1_features["x0"]) / 2.0
+        # x1 = (noise2_features["x1"] + noise1_features["x1"]) / 2.0
+        # x2 = (noise2_features["x2"] + noise1_features["x2"]) / 2.0
+        # x3 = (noise2_features["x3"] + noise1_features["x3"]) / 2.0
+        # x4_1 = (noise2_features["x4_1"] + noise1_features["x4_1"]) / 2.0
+        # x4_2 = (noise2_features["x4_2"] + noise1_features["x4_2"]) / 2.0
+        # x4_3 = (noise2_features["x4_3"] + noise1_features["x4_3"]) / 2.0
+        # x5 = (noise2_features["x5"] + noise1_features["x5"]) / 2.0
+        #
+        # avegNoise = {
+        #     "x0": x0,
+        #     "x1": x1,
+        #     "x2": x2,
+        #     "x3": x3,
+        #     "x4_1": x4_1,
+        #     "x4_2": x4_2,
+        #     "x4_3": x4_3,
+        #     "x5": x5,
+        #
+        # }
 
         gt_recon = self.clean_decoder(noise_features, avegNoise)
 
@@ -141,9 +174,9 @@ class Encoder(nn.Module):
         return feature_dic
 
 
-class NoiseOneEncoder(nn.Module):
+class NoiseEncoder(nn.Module):
     def __init__(self, input_channels=3):
-        super(NoiseOneEncoder, self).__init__()
+        super(NoiseEncoder, self).__init__()
         self.conv1 = Cvi(input_channels, 64)
         self.conv2 = Cvi(64, 128, before="LReLU", after="BN")
         self.conv3 = Cvi(128, 256, before="LReLU", after="BN")
@@ -189,41 +222,61 @@ class NoiseTwoEncoder(nn.Module):
 
         return feature_dic
 
-
 class CleanDecoder(nn.Module):
     def __init__(self,output_channels=3):
         super(CleanDecoder, self).__init__()
-        self.cvt6 = CvTi(512, 512, before="ReLU", after="BN")
-        self.cvt7 = CvTi(1024, 512, before="ReLU", after="BN")
-        self.cvt8 = CvTi(1024, 256, before="ReLU", after="BN")
-        self.cvt9 = CvTi(512, 128, before="ReLU", after="BN")
-        self.cvt10 = CvTi(256, 64, before="ReLU", after="BN")
-        self.cvt11 = CvTi(128, output_channels, before="ReLU", after="Tanh")
+        self.conv1 = CvTi(512, 256, before="ReLU", after="BN")
+        self.conv2 = CvTi(512, 128, before="ReLU", after="BN")
+        self.conv3 = CvTi(256, 64, before="ReLU", after="BN")
+        self.conv4 = CvTi(128, output_channels, before="ReLU", after="Tanh")
 
 
     def forward(self, noise, dn1):
 
-        x6 = self.cvt6((noise["x5"]-dn1["x5"])/2.0)
-        cat1_1 = torch.cat([x6, (noise["x4_3"]-dn1["x4_3"])/2.0], dim=1)
-        x7_1 = self.cvt7(cat1_1)
-        cat1_2 = torch.cat([x7_1, (noise["x4_2"]-dn1["x4_2"])/2.0], dim=1)
-        x7_2 = self.cvt7(cat1_2)
-        cat1_3 = torch.cat([x7_2, (noise["x4_1"]-dn1["x4_1"])/2.0], dim=1)
-        x7_3 = self.cvt7(cat1_3)
+        x4 = (noise["x4"]-dn1["x4"])/2.0
+        x3 = self.conv1(x4)
+        cat3 = torch.cat([x3,(noise["x3"]-dn1["x3"])/2.0], dim=1)
+        x2 = self.conv2(cat3)
+        cat2 = torch.cat([x2,(noise["x2"]-dn1["x2"])/2.0], dim=1)
+        x1= self.conv3(cat2)
+        cat1 = torch.cat([x1,(noise["x1"]-dn1["x1"])/2.0], dim=1)
+        x = self.conv4(cat1)
 
-        cat2 = torch.cat([x7_3, (noise["x3"]-dn1["x3"])/2.0], dim=1)
-        x8 = self.cvt8(cat2)
-
-        cat3 = torch.cat([x8, (noise["x2"]-dn1["x2"])/2.0], dim=1)
-        x9 = self.cvt9(cat3)
-
-        cat4 = torch.cat([x9, (noise["x1"]-dn1["x1"])/2.0], dim=1)
-        x10 = self.cvt10(cat4)
-
-        cat5 = torch.cat([x10, (noise["x0"]-dn1["x0"])/2.0], dim=1)
-        out = self.cvt11(cat5)
-
-        return out
+        return x
+# class CleanDecoder(nn.Module):
+#     def __init__(self,output_channels=3):
+#         super(CleanDecoder, self).__init__()
+#         self.cvt6 = CvTi(512, 512, before="ReLU", after="BN")
+#         self.cvt7 = CvTi(1024, 512, before="ReLU", after="BN")
+#         self.cvt8 = CvTi(1024, 256, before="ReLU", after="BN")
+#         self.cvt9 = CvTi(512, 128, before="ReLU", after="BN")
+#         self.cvt10 = CvTi(256, 64, before="ReLU", after="BN")
+#         self.cvt11 = CvTi(128, output_channels, before="ReLU", after="Tanh")
+#
+#
+#     def forward(self, noise, dn1):
+#
+#         x6 = self.cvt6((noise["x5"]-dn1["x5"])/2.0)
+#         cat1_1 = torch.cat([x6, (noise["x4_3"]-dn1["x4_3"])/2.0], dim=1)
+#         x7_1 = self.cvt7(cat1_1)
+#         cat1_2 = torch.cat([x7_1, (noise["x4_2"]-dn1["x4_2"])/2.0], dim=1)
+#         x7_2 = self.cvt7(cat1_2)
+#         cat1_3 = torch.cat([x7_2, (noise["x4_1"]-dn1["x4_1"])/2.0], dim=1)
+#         x7_3 = self.cvt7(cat1_3)
+#
+#         cat2 = torch.cat([x7_3, (noise["x3"]-dn1["x3"])/2.0], dim=1)
+#         x8 = self.cvt8(cat2)
+#
+#         cat3 = torch.cat([x8, (noise["x2"]-dn1["x2"])/2.0], dim=1)
+#         x9 = self.cvt9(cat3)
+#
+#         cat4 = torch.cat([x9, (noise["x1"]-dn1["x1"])/2.0], dim=1)
+#         x10 = self.cvt10(cat4)
+#
+#         cat5 = torch.cat([x10, (noise["x0"]-dn1["x0"])/2.0], dim=1)
+#         out = self.cvt11(cat5)
+#
+#         return out
 class NoiseOneDecoder(nn.Module):
     def __init__(self,output_channels=3):
         super(NoiseOneDecoder, self).__init__()
@@ -260,10 +313,10 @@ class NoiseOneDecoder(nn.Module):
 class NoiseTwoDecoder(nn.Module):
     def __init__(self,output_channels=3):
         super(NoiseTwoDecoder, self).__init__()
-        self.conv1 = CvTi(512, 256, before="ReLU", after="BN")
+        self.conv1 = CvTi(1024, 256, before="ReLU", after="BN")
         self.conv2 = CvTi(512, 128, before="ReLU", after="BN")
         self.conv3 = CvTi(256, 64, before="ReLU", after="BN")
-        self.conv4 = CvTi(128, output_channels, before="ReLU", after="Tanh")
+        self.conv4 = CvTi(64, output_channels, before="ReLU", after="Tanh")
 
 
     def forward(self, noise2):

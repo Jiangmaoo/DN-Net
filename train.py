@@ -166,14 +166,36 @@ def set_requires_grad(nets,requires_grad=False):
 #损失日志
 def plot_log(data, save_model_name="model"):
     plt.cla()
-    plt.plot(data["G"],label="G_loss")
-    plt.plot(data["D"],label="D_loss")
-    plt.plot(data["SG"],label="Single_Generator_loss")
-    plt.plot(data["GENERAL"],label="General_loss")
-    plt.legend()
-    plt.xlabel("epoch")
-    plt.ylabel("loss")
-    plt.title("Loss")
+    plt.figure()
+    ax1 = plt.subplot(221)
+    ax1.plot(data["G"])
+    ax1.set_title("G_loss")
+
+    ax2 = plt.subplot(222)
+    ax2.plot(data["D"])
+    ax2.set_title("D_loss")
+
+    ax3 = plt.subplot(223)
+    ax3.plot(data["SG"])
+    ax3.set_title("Single_Generator_loss")
+
+    ax4 = plt.subplot(224)
+    ax4.plot(data["GENERAL"])
+    ax4.set_title("General_loss")
+
+    plt.tight_layout()
+    # ax1=plt.subplot(221)
+    # ax1.plot(data["G"],label="G_loss")
+    # ax2 = plt.subplot(222)
+    # ax2.plot(data["D"],label="D_loss")
+    # ax3 = plt.subplot(223)
+    # ax3.plot(data["SG"],label="Single_Generator_loss")
+    # ax4 = plt.subplot(224)
+    # ax4.plot(data["GENERAL"],label="General_loss")
+    # plt.legend()
+    # plt.xlabel("epoch")
+    # plt.ylabel("loss")
+    # plt.title("Loss")
     plt.savefig("./logs/"+ save_model_name +".png")
 
 def un_normalize(x):
@@ -196,21 +218,22 @@ def evaluate(g1,dataset,device,filename):
     noise1, noise2 = calNoise(img,"cpu")
     with torch.no_grad():
 
-        noise1,noise2,reconstruct_gt=g1.test(img.to(device),noise1.to(device),noise2.to(device))
+        noise_ave,noise_no,reconstruct_gt=g1.test(img.to(device),noise1.to(device),noise2.to(device))
         grid_rec=make_grid(un_normalize(reconstruct_gt.to(torch.device("cpu"))),nrow=3)
         # print(grid_rec.shape)
-        noise1=noise1.to(torch.device("cpu"))
+        noise_ave=noise_ave.to(torch.device("cpu"))
         reconstruct_gt = reconstruct_gt.to(torch.device("cpu"))
-        noise2=noise2.to(torch.device("cpu"))
+        noise_no=noise_no.to(torch.device("cpu"))
 
     grid_removal=make_grid(
         torch.cat(
             (
                 un_normalize(img),
                 un_normalize(gt),
-                un_normalize(noise1),
-                un_normalize(noise2),
-                un_normalize(reconstruct_gt)
+                un_normalize(reconstruct_gt),
+                un_normalize(noise_ave),
+                un_normalize(noise_no)
+
             ),
             dim = 0,
         ),
@@ -255,7 +278,8 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
     criterion_gan=nn.BCEWithLogitsLoss().to(device)   #sigmoid+BCE
     #criterion_gan=nn.BCELoss().to(device)
     criterion_l1=nn.L1Loss().to(device)
-    criterion_mse = nn.MSELoss().to(device)
+    criterion_mse = nn.MSELoss().to(device) #均方差损失函数MSELoss L2
+
     criterion_bce=nn.BCEWithLogitsLoss().to(device)
 
     mini_batch_size=parser.batch_size
@@ -325,7 +349,7 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
             #将模型参数梯度设置为0
             optimizer_d1.zero_grad()
             #获取生成器生成的图片
-            recon_noise1, recon_noise2,reconstruct_gt=g1(images,noise1,noise2)
+            noise_ave, noise_no,reconstruct_gt=g1(images,noise1,noise2)
 
 
             #重建干净图像鉴别器
@@ -368,8 +392,8 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
 
             #分别计算
             g_l_data1=criterion_mse(reconstruct_gt,gt)  #gt重构损失
-            g_l_data2_1 = criterion_mse(noise1, mask)  # 噪声分布1图像损失
-            g_l_data2_2 = criterion_mse(noise2, mask)  # 噪声分布2图像损失
+            g_l_data2 = criterion_mse(noise_ave, mask)  # 噪声分布图像损失
+            g_l_data3 = criterion_mse(noise_no, gt)  # 减噪噪图像损失
             # g_l_data2=criterion_bce(noise1,noise2)     #噪声特征相似损失
 
             #生成器总损失
@@ -378,15 +402,14 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
 
             # 生成器总损失10,0.1,0.2,2
             g_loss=lambda_dict["lambda1"]*g_l_data1+lambda_dict["lambda2"]*g_l_c_gan1+\
-                lambda_dict["lambda1"]*g_l_data2_1+lambda_dict["lambda1"]*g_l_data2_2
+                lambda_dict["lambda1"]*g_l_data2+lambda_dict["lambda1"]*g_l_data3
             g_loss.backward()
             optimizer_g.step()
             # print(g_loss)
 
             epoch_g_loss+=g_loss.item()    #生成器总损失
             epoch_single_g_loss+=g_l_c_gan1.item()  #gan损失
-            epoch_tf_loss += g_l_data1.item()  # 噪声分布损失
-            # epoch_nd_loss+=g_l_data2.item() #噪声分布损失
+            epoch_tf_loss += g_l_data1.item()  # gt重构损失
 
         t_epoch_finish=time.time()
         Epoch_D_Loss=epoch_d_loss/(lambda_dict["lambda2"]*2*data_len)
