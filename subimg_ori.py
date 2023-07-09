@@ -1,3 +1,4 @@
+#邻居子采样图像，尺寸下降
 import torch
 
 def get_generator():

@@ -1,4 +1,4 @@
-import cv2
+#邻居子采样图像模块。原尺寸
 
 import torch
 from PIL import Image

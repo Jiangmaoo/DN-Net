@@ -1,3 +1,5 @@
+#采样的图像没有经过均值滤波去噪，直接送入编码器的
+
 import argparse
 import os
 import time
@@ -15,7 +17,6 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from models.DN_network import DN_Net, Discriminator
-from models.MeanFilter import MeanFilter
 from utils.data_loader import ImageDataset, ImageTransform,make_data_path_list
 
 torch.manual_seed(44)   #设置CPU生成随机数的种子
@@ -215,10 +216,12 @@ def evaluate(g1,dataset,device,filename):
     print(img.shape)
     # print(img.device)  #cpu
 
-    noise1, noise2 = calNoise(img,"cpu")
+    mask1, mask2 = generate_mask_pair(img, "cpu")  # mask1.shape:torch.Size([65536]) 65536=256*256
+    noisy_sub1 = generate_subimages(img, mask1)  # noisy_sub1.shape:torch.Size([1, 3, 128, 128])
+    noisy_sub2 = generate_subimages(img, mask2)
     with torch.no_grad():
 
-        noise_ave,noise_no,reconstruct_gt=g1.test(img.to(device),noise1.to(device),noise2.to(device))
+        noise_ave,noise_no,reconstruct_gt=g1.test(img.to(device),noisy_sub1.to(device),noisy_sub2.to(device))
         grid_rec=make_grid(un_normalize(reconstruct_gt.to(torch.device("cpu"))),nrow=3)
         # print(grid_rec.shape)
         noise_ave=noise_ave.to(torch.device("cpu"))
@@ -330,17 +333,6 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
             noisy_sub1 = generate_subimages(images, mask1)  # noisy_sub1.shape:torch.Size([1, 3, 128, 128])
             noisy_sub2 = generate_subimages(images, mask2)
 
-            mean_filter = MeanFilter(kernel_size=5)
-            denoise1 = mean_filter(noisy_sub1)  # torch.Size([1, 3, 128, 128])
-            denoise2 = mean_filter(noisy_sub2)
-
-            # 计算噪声图像和干净图像的差异
-            diff1 = torch.abs(images - denoise1)
-            # 根据差异计算掩码
-            threshold = 0.05  # 可以根据具体情况调整阈值
-            noise1 = (diff1 > threshold).float()  # 大于阈值的位置被置为 1，否则为 0
-            diff2 = torch.abs(images - denoise2)
-            noise2 = (diff2 > threshold).float()  # 大于阈值的位置被置为 1，否则为 0
 
             #====训练鉴别器=====
 
@@ -349,7 +341,7 @@ def train_model(g1,d1,dataloader,val_dataset,num_epochs,parser,save_model_name="
             #将模型参数梯度设置为0
             optimizer_d1.zero_grad()
             #获取生成器生成的图片
-            noise_ave, noise_no,reconstruct_gt=g1(images,noise1,noise2)
+            noise_ave, noise_no,reconstruct_gt=g1(images,noisy_sub1,noisy_sub2)
 
 
             #重建干净图像鉴别器

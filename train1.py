@@ -1,3 +1,5 @@
+#邻居子采样模块
+
 import cv2
 import torch
 
