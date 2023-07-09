@@ -1,3 +1,6 @@
+#torch.abs((noise["x4"]-dn1["x4"])/2.0)
+#将子采样图像直接送入编码器
+
 import math
 
 import torch
@@ -93,27 +96,6 @@ class DN_Net(nn.Module):
 
         }
 
-        # x0 = (noise2_features["x0"] + noise1_features["x0"]) / 2.0
-        # x1 = (noise2_features["x1"] + noise1_features["x1"]) / 2.0
-        # x2 = (noise2_features["x2"] + noise1_features["x2"]) / 2.0
-        # x3 = (noise2_features["x3"] + noise1_features["x3"]) / 2.0
-        # x4_1 = (noise2_features["x4_1"] + noise1_features["x4_1"]) / 2.0
-        # x4_2 = (noise2_features["x4_2"] + noise1_features["x4_2"]) / 2.0
-        # x4_3 = (noise2_features["x4_3"] + noise1_features["x4_3"]) / 2.0
-        # x5 = (noise2_features["x5"] + noise1_features["x5"]) / 2.0
-        #
-        # avegNoise = {
-        #     "x0": x0,
-        #     "x1": x1,
-        #     "x2": x2,
-        #     "x3": x3,
-        #     "x4_1": x4_1,
-        #     "x4_2": x4_2,
-        #     "x4_3": x4_3,
-        #     "x5": x5,
-        #
-        # }
-
         gt_recon = self.clean_decoder(noise_features, avegNoise)
 
         return gt_recon
@@ -140,67 +122,9 @@ class Up(nn.Module):
         super().__init__()
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
-class Encoder(nn.Module):
-    def __init__(self,input_channels=3):
-        super(Encoder, self).__init__()
-        self.cv0=Cvi(input_channels,64)
-        self.cv1=Cvi(64,128,before="LReLU",after="BN")
-        self.cv2=Cvi(128,256,before="LReLu",after="BN")
-        self.cv3=Cvi(256,512,before="LReLU",after="BN")
-        self.cv4 = Cvi(512, 512, before="LReLU", after="BN")
-        self.cv5 = Cvi(512, 512, before="LReLU")
-
-    def forward(self,x):
-        x0=self.cv0(x)
-        x1=self.cv1(x0)
-        x2=self.cv2(x1)
-        x3=self.cv3(x2)
-        x4_1=self.cv4(x3)
-        x4_2=self.cv4(x4_1)
-        x4_3=self.cv4(x4_2)
-        x5=self.cv5(x4_3)
-
-        feature_dic={
-            "x0":x0,
-            "x1":x1,
-            "x2":x2,
-            "x3":x3,
-            "x4_1":x4_1,
-            "x4_2":x4_2,
-            "x4_3":x4_3,
-            "x5":x5,
-        }
-
-        return feature_dic
-
-
 class NoiseEncoder(nn.Module):
     def __init__(self, input_channels=3):
         super(NoiseEncoder, self).__init__()
-        self.conv1 = Cvi(input_channels, 64)
-        self.conv2 = Cvi(64, 128, before="LReLU", after="BN")
-        self.conv3 = Cvi(128, 256, before="LReLU", after="BN")
-        self.conv4 = Cvi(256, 512, before="LReLU")
-
-    def forward(self, x):
-        x1 = self.conv1(x)
-        x2 = self.conv2(x1)
-        x3 = self.conv3(x2)
-        x4 = self.conv4(x3)
-
-        feature_dic = {
-            "x1": x1,
-            "x2": x2,
-            "x3": x3,
-            "x4": x4,
-
-        }
-
-        return feature_dic
-
-class NoiseTwoEncoder(nn.Module):
-    def __init__(self, input_channels=3):
-        super(NoiseTwoEncoder, self).__init__()
         self.conv1 = Cvi(input_channels, 64)
         self.conv2 = Cvi(64, 128, before="LReLU", after="BN")
         self.conv3 = Cvi(128, 256, before="LReLU", after="BN")
@@ -233,90 +157,23 @@ class CleanDecoder(nn.Module):
 
     def forward(self, noise, dn1):
 
-        x4 = (noise["x4"]-dn1["x4"])/2.0
+        x4 = torch.abs((noise["x4"]-dn1["x4"])/2.0)
         x3 = self.conv1(x4)
-        cat3 = torch.cat([x3,(noise["x3"]-dn1["x3"])/2.0], dim=1)
+        cat3 = torch.cat([x3,torch.abs((noise["x3"]-dn1["x3"])/2.0)], dim=1)
         x2 = self.conv2(cat3)
-        cat2 = torch.cat([x2,(noise["x2"]-dn1["x2"])/2.0], dim=1)
+        cat2 = torch.cat([x2,torch.abs((noise["x2"]-dn1["x2"])/2.0)], dim=1)
         x1= self.conv3(cat2)
-        cat1 = torch.cat([x1,(noise["x1"]-dn1["x1"])/2.0], dim=1)
+        cat1 = torch.cat([x1,torch.abs((noise["x1"]-dn1["x1"])/2.0)], dim=1)
         x = self.conv4(cat1)
 
         return x
-# class CleanDecoder(nn.Module):
-#     def __init__(self,output_channels=3):
-#         super(CleanDecoder, self).__init__()
-#         self.cvt6 = CvTi(512, 512, before="ReLU", after="BN")
-#         self.cvt7 = CvTi(1024, 512, before="ReLU", after="BN")
-#         self.cvt8 = CvTi(1024, 256, before="ReLU", after="BN")
-#         self.cvt9 = CvTi(512, 128, before="ReLU", after="BN")
-#         self.cvt10 = CvTi(256, 64, before="ReLU", after="BN")
-#         self.cvt11 = CvTi(128, output_channels, before="ReLU", after="Tanh")
-#
-#
-#     def forward(self, noise, dn1):
-#
-#         x6 = self.cvt6((noise["x5"]-dn1["x5"])/2.0)
-#         cat1_1 = torch.cat([x6, (noise["x4_3"]-dn1["x4_3"])/2.0], dim=1)
-#         x7_1 = self.cvt7(cat1_1)
-#         cat1_2 = torch.cat([x7_1, (noise["x4_2"]-dn1["x4_2"])/2.0], dim=1)
-#         x7_2 = self.cvt7(cat1_2)
-#         cat1_3 = torch.cat([x7_2, (noise["x4_1"]-dn1["x4_1"])/2.0], dim=1)
-#         x7_3 = self.cvt7(cat1_3)
-#
-#         cat2 = torch.cat([x7_3, (noise["x3"]-dn1["x3"])/2.0], dim=1)
-#         x8 = self.cvt8(cat2)
-#
-#         cat3 = torch.cat([x8, (noise["x2"]-dn1["x2"])/2.0], dim=1)
-#         x9 = self.cvt9(cat3)
-#
-#         cat4 = torch.cat([x9, (noise["x1"]-dn1["x1"])/2.0], dim=1)
-#         x10 = self.cvt10(cat4)
-#
-#         cat5 = torch.cat([x10, (noise["x0"]-dn1["x0"])/2.0], dim=1)
-#         out = self.cvt11(cat5)
-#
-#         return out
-class NoiseOneDecoder(nn.Module):
-    def __init__(self,output_channels=3):
-        super(NoiseOneDecoder, self).__init__()
-        self.cvt6 = CvTi(512, 512, before="ReLU", after="BN")
-        self.cvt7 = CvTi(1024, 512, before="ReLU", after="BN")
-        self.cvt8 = CvTi(1024, 256, before="ReLU", after="BN")
-        self.cvt9 = CvTi(512, 128, before="ReLU", after="BN")
-        self.cvt10 = CvTi(256, 64, before="ReLU", after="BN")
-        self.cvt11 = CvTi(128, output_channels, before="ReLU", after="Tanh")
-
-    def forward(self, feature_dic):
-        x6 = self.cvt6(feature_dic["x5"])
-
-        cat1_1 = torch.cat([x6, feature_dic["x4_3"]], dim=1)
-        x7_1 = self.cvt7(cat1_1)
-        cat1_2 = torch.cat([x7_1, feature_dic["x4_2"]], dim=1)
-        x7_2 = self.cvt7(cat1_2)
-        cat1_3 = torch.cat([x7_2, feature_dic["x4_1"]], dim=1)
-        x7_3 = self.cvt7(cat1_3)
-
-        cat2 = torch.cat([x7_3, feature_dic["x3"]], dim=1)
-        x8 = self.cvt8(cat2)
-
-        cat3 = torch.cat([x8, feature_dic["x2"]], dim=1)
-        x9 = self.cvt9(cat3)
-
-        cat4 = torch.cat([x9, feature_dic["x1"]], dim=1)
-        x10 = self.cvt10(cat4)
-
-        cat5 = torch.cat([x10, feature_dic["x0"]], dim=1)
-        out = self.cvt11(cat5)
-
-        return out
 class NoiseTwoDecoder(nn.Module):
     def __init__(self,output_channels=3):
         super(NoiseTwoDecoder, self).__init__()
-        self.conv1 = CvTi(1024, 256, before="ReLU", after="BN")
+        self.conv1 = CvTi(512, 256, before="ReLU", after="BN")
         self.conv2 = CvTi(512, 128, before="ReLU", after="BN")
         self.conv3 = CvTi(256, 64, before="ReLU", after="BN")
-        self.conv4 = CvTi(64, output_channels, before="ReLU", after="Tanh")
+        self.conv4 = CvTi(128, output_channels, before="ReLU", after="Tanh")
 
 
     def forward(self, noise2):
